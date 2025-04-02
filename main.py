@@ -4,14 +4,18 @@ import uuid
 import codecs
 import binascii
 from tabnanny import verbose
-
 import psutil
 import time
 import os
 from scapy.all import *
+import scapy.config
+import scapy.layers.l2
+import scapy.route
 import sys
 
 from scapy.layers.l2 import ARP, Ether
+
+os.system('echo 1 > /proc/sys/net/ipv4/ip_forward')
 
 
 def get_default_gateway_linux():
@@ -235,6 +239,38 @@ def get_mac(ip):
     for i in ans_list:
         return i[1].hwsrc
 
+def long2net(arg):
+    if (arg <= 0 or arg >= 0xFFFFFFFF):
+        raise ValueError("illegal netmask value", hex(arg))
+    return 32 - int(round(math.log(0xFFFFFFFF - arg, 2)))
+
+
+def to_CIDR_notation(bytes_network, bytes_netmask):
+    network = scapy.utils.ltoa(bytes_network)
+    netmask = long2net(bytes_netmask)
+    net = "%s/%s" % (network, netmask)
+    if netmask < 16:
+        return None
+    return net
+
+
+def scan(net, interface, timeout=5):
+    ret = []
+    try:
+        ans, unans = scapy.layers.l2.arping(net, iface=interface, timeout=timeout, verbose=True)
+        for s, r in ans.res:
+            line = [r.src, r.psrc]
+            try:
+                #hostname = socket.gethostbyaddr(r.psrc)
+                #line += " " + hostname[0]
+                ret.append(line)
+            except socket.herror:
+                # failed to resolve
+                pass
+    except socket.error as e:
+        raise
+    return ret
+
 class Client():
     def __init__(self, ip, mac):
         self.ip = ip
@@ -266,12 +302,25 @@ class IPtable():
             restore(client.ip, client.mac, self.gateway_ip, self.mac)
 
     def scan(self):
-        arp_request = ARP(pdst = self.ip[:-3]+"1/24")
-        broadcast = Ether(dst = "ff:ff:ff:ff:ff:ff")
-        arp_request_broadcast = broadcast/arp_request
-        ans_list = srp(arp_request_broadcast, timeout = 3, verbose = False)[0]
-        for i in ans_list:
-            self.emplase(Client(i[1].psrc, i[1].hwsrc))
+        ips = []
+        for network, netmask, _, interface, address, _ in scapy.config.conf.route.routes:
+            # skip loopback network and default gw
+            if network == 0 or interface == 'lo' or address == '127.0.0.1' or address == '0.0.0.0':
+                continue
+            if netmask <= 0 or netmask == 0xFFFFFFFF:
+                continue
+            # skip docker interface
+            if (interface.startswith('docker')
+                    or interface.startswith('br-')
+                    or interface.startswith('tun')):
+                continue
+            net = to_CIDR_notation(network, netmask)
+            if net:
+                i = scan(net, interface)
+                for line in i:
+                    ips.append(line)
+        for i in ips:
+            self.clients.append(Client(ips[1], ips[0]))
 
     def attack(self):
         for client in self.clients:
@@ -284,11 +333,13 @@ def main():
     gateway_mac = get_mac(gateway_ip)
     Ips = IPtable(host_mac, host_ip, gateway_ip, gateway_mac)
     Ips.scan()
-    Ips.attack()
-    while (True):
-        raw_data, address = conn.recvfrom(65535)
-        Seg = factory(raw_data)
-        Seg.print_values()
+    #Ips.attack()
+    #while (True):
+    #    raw_data, address = conn.recvfrom(65535)
+    #    Seg = factory(raw_data)
+    #    Seg.print_values()
+    for client in Ips.clients:
+        print(client.ip)
 
 
 
