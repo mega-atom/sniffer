@@ -359,3 +359,4 @@ if __name__ == '__main__':
         if command == 'packets':
             for i in Ips.packets:
                 i.print_values()
+    Ips.restore()
