@@ -209,15 +209,15 @@ class HTTP(TCP):
 
 def factory(data):
     obj = Ethernet_frame(data)
-    if (obj.eth_proto == 8):
+    if (obj.eth_proto == 8 and len(obj.data) >= 20):
         obj = IPv4_packet(data)
-        if (obj.proto == 1):
+        if (obj.proto == 1 and len(obj.data) >= 4):
             obj = ICMP(data)
-        elif (obj.proto == 6):
+        elif (obj.proto == 6 and len(obj.data) >= 14):
             obj = TCP(data)
-            if (b'HTTP' in obj.data):
+            if (b'HTTP' in obj.data and len(obj.data) > 0):
                 obj = HTTP(data)
-        elif (obj.proto == 6):
+        elif (obj.proto == 6 and len(obj.data) >= 8):
             obj = UDP(data)
     elif (obj.eth_proto == 1544 and len(obj.data) == 28):
         obj = ARP_packet(data)
