@@ -327,7 +327,7 @@ class IPtable():
             if net:
                 i = scan(net, interface)
                 for line in i:
-                    ips.append([line[0], line[1], interface])
+                    ips.append([line[0].upper(), line[1], interface])
         for i in ips:
             self.emplase(Client(i[1], i[0], i[2]))
 
