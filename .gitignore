@@ -1,0 +1,14 @@
+﻿################################################################################
+# Данный GITIGNORE-файл был автоматически создан Microsoft(R) Visual Studio.
+################################################################################
+
+/.vs/sniffer/FileContentIndex/b9070ea2-dc32-4e54-8262-031acfc84586.vsidx
+/.vs/sniffer/v17/.wsuo
+/.vs/sniffer/v17/DocumentLayout.backup.json
+/.vs/sniffer/FileContentIndex/763307e0-d755-4b7c-aa3f-981edd67bf96.vsidx
+/.vs/sniffer/FileContentIndex/6114e1bf-61ce-49aa-b7a7-a7eb05e76ea8.vsidx
+/.vs/sniffer/FileContentIndex
+/.vs/sniffer/v17
+*.json
+*.sqlite
+*.sqlite-journal
