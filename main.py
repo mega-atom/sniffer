@@ -58,7 +58,7 @@ class Ethernet_frame():
 class IPv4_packet(Ethernet_frame):
     def __init__(self, data):
         Ethernet_frame.__init__(self, data)
-        version_header_length = data[0]
+        version_header_length = self.data[0]
         self.version  = version_header_length >> 4
         self.header_length = (version_header_length & 15) * 4
         self.time_to_live, self.proto, src, target = struct.unpack('! 8x B B 2x 4s 4s', self.data[:20])
@@ -270,18 +270,22 @@ class IPtable():
     def restore(self):
         for client in self.clients:
             if (client.type == False):
-                client.restore()
+                for i in range(20):
+                    client.restore()
 
     def insert_packet(self, data):
         packet = factory(data)
         if packet.type != 'Ethernet_frame' and packet.type != 'ARP_packet':
-            client_id = self.find_ip(packet.target)
-        else:
-            client_id = self.find_mac(packet.dest_mac)
+            client_id = self.find_ip(packet.src)
+            if (client_id != -1):
+                self.clients[client_id].packets.append(packet)
+                return
+        client_id = self.find_mac(packet.source_mac)
         if (client_id != -1):
             self.clients[client_id].packets.append(packet)
-        else:
-            self.unreg_packets.append(packet)
+            return
+        self.unreg_packets.append(packet)
+        return;
 
 
 def Sniff(Ips):
