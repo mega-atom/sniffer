@@ -17,6 +17,13 @@ import pandas as pd
 from scapy.config import conf
 from scapy.layers.l2 import ARP, Ether
 
+import pandas as pd
+
+from PySide6.QtWidgets import QTableView, QApplication, QToolBar, QMainWindow, QLineEdit, QWidget, QGridLayout, QPushButton, QLabel, QComboBox
+from PySide6.QtGui import QAction
+from PySide6.QtCore import QAbstractTableModel, Qt, QModelIndex
+import sys
+
 #os.system('echo 1 > /proc/sys/net/ipv4/ip_forward')
 conf.debug_dissector = 2
 
@@ -193,16 +200,18 @@ class IPtable():
             if (client.type == False):
                 for i in range(20):
                     client.restore()
-
+                    
 class Database():
     def __init__(self):
-        self.Ethernet_frames = pd.DataFrame({'data': [], 'dest_mac':[], 'source_mac':[], 'eth_proto':[]})
-        self.ARP_packets = pd.DataFrame({'data': [], 'dest_mac':[], 'source_mac':[], 'eth_proto':[], 'SHA':[], 'SPA':[], 'THA':[], 'TPA':[]})
-        self.IP_v4_packets = pd.DataFrame({'data': [], 'dest_mac':[], 'source_mac':[], 'eth_proto':[], 'version':[], 'header_length':[], 'time_to_live':[], 'proto':[], 'src':[], 'target':[]})
-        self.ICMP_packets = pd.DataFrame({'data': [], 'dest_mac':[], 'source_mac':[], 'eth_proto':[], 'version':[], 'header_length':[], 'time_to_live':[], 'proto':[], 'src':[], 'target':[], 'icmp_type':[],'code':[], 'checksumm':[]})
-        self.UDP_packets = pd.DataFrame({'data': [], 'dest_mac':[], 'source_mac':[], 'eth_proto':[], 'version':[], 'header_length':[], 'time_to_live':[], 'proto':[], 'src':[], 'target':[], 'src_port':[], 'dest_port':[], 'size':[]})
-        self.TCP_packets = pd.DataFrame({'data': [], 'dest_mac':[], 'source_mac':[], 'eth_proto':[], 'version':[], 'header_length':[], 'time_to_live':[], 'proto':[], 'src':[], 'target':[], 'src_port':[], 'dest_port':[], 'sequence':[], 'aknowledgment':[], 'offset_reseved_flags':[], 'flag_urg':[], 'bflag_ack':[], 'flag_psh':[], 'flag_rst':[], 'flag_syn':[], 'flag_fin':[]})
-        self.HTTP_packets = pd.DataFrame({'data': [], 'dest_mac':[], 'source_mac':[], 'eth_proto':[], 'version':[], 'header_length':[], 'time_to_live':[], 'proto':[], 'src':[], 'target':[], 'src_port':[], 'dest_port':[], 'sequence':[], 'aknowledgment':[], 'offset_reseved_flags':[], 'flag_urg':[], 'bflag_ack':[], 'flag_psh':[], 'flag_rst':[], 'flag_syn':[], 'flag_fin':[], 'http_string':[]})
+        self.data = {
+            'Ethernet_frames' : pd.DataFrame({'data': [], 'dest_mac':[], 'source_mac':[], 'eth_proto':[]}),
+            'ARP_packets' : pd.DataFrame({'data': [], 'dest_mac':[], 'source_mac':[], 'eth_proto':[], 'SHA':[], 'SPA':[], 'THA':[], 'TPA':[]}),
+            'IP_v4_packets' : pd.DataFrame({'data': [], 'dest_mac':[], 'source_mac':[], 'eth_proto':[], 'version':[], 'header_length':[], 'time_to_live':[], 'proto':[], 'src':[], 'target':[]}),
+            'ICMP_packets' : pd.DataFrame({'data': [], 'dest_mac':[], 'source_mac':[], 'eth_proto':[], 'version':[], 'header_length':[], 'time_to_live':[], 'proto':[], 'src':[], 'target':[], 'icmp_type':[],'code':[], 'checksumm':[]}),
+            'UDP_packets' : pd.DataFrame({'data': [], 'dest_mac':[], 'source_mac':[], 'eth_proto':[], 'version':[], 'header_length':[], 'time_to_live':[], 'proto':[], 'src':[], 'target':[], 'src_port':[], 'dest_port':[], 'size':[]}),
+            'TCP_packets' : pd.DataFrame({'data': [], 'dest_mac':[], 'source_mac':[], 'eth_proto':[], 'version':[], 'header_length':[], 'time_to_live':[], 'proto':[], 'src':[], 'target':[], 'src_port':[], 'dest_port':[], 'sequence':[], 'aknowledgment':[], 'offset_reseved_flags':[], 'flag_urg':[], 'flag_ack':[], 'flag_psh':[], 'flag_rst':[], 'flag_syn':[], 'flag_fin':[]}),
+            'HTTP_packets' : pd.DataFrame({'data': [], 'dest_mac':[], 'source_mac':[], 'eth_proto':[], 'version':[], 'header_length':[], 'time_to_live':[], 'proto':[], 'src':[], 'target':[], 'src_port':[], 'dest_port':[], 'sequence':[], 'aknowledgment':[], 'offset_reseved_flags':[], 'flag_urg':[], 'flag_ack':[], 'flag_psh':[], 'flag_rst':[], 'flag_syn':[], 'flag_fin':[], 'http_string':[]})
+        }
     def insert_data(self, data):
         unpacked = Ethernet_frame(data)
         if (len(unpacked['data']) >= 20 and unpacked['eth_proto'] == 8):
@@ -210,36 +219,200 @@ class Database():
             if (unpacked['proto'] == 1 and len(unpacked['data']) >= 4):
                 unpacked = ICMP_packet(unpacked)
                 unpacked['data'] = str(unpacked['data'])
-                self.ICMP_packets.loc[self.ICMP_packets.shape[0]] = unpacked
+                self.data['ICMP_packets'].loc[self.data['ICMP_packets'].shape[0]] = unpacked
             elif (unpacked['proto'] == 6 and len(unpacked['data']) >= 14):
                 unpacked = TCP_packet(unpacked)
                 if (b'HTTP' in unpacked['data'] and len(unpacked['data']) > 0):
                     unpacked = HTTP_packet(unpacked)
                     unpacked['data'] = str(unpacked['data'])
-                    self.HTTP_packets.loc[self.HTTP_packets.shape[0]] = unpacked
+                    self.data['HTTP_packets'].loc[self.data['HTTP_packets'].shape[0]] = unpacked
                 else:
                     unpacked['data'] = str(unpacked['data'])
-                    self.TCP_packets.loc[self.TCP_packets.shape[0]] = unpacked
+                    self.data['TCP_packets'].loc[self.data['TCP_packets'].shape[0]] = unpacked
             elif (unpacked['proto'] == 6 and len(unpacked['data']) >= 8):
                 unpacked = UDP_packet(unpacked)
                 unpacked['data'] = str(unpacked['data'])
-                self.UDP_packets.loc[self.UDP_packets.shape[0]] = unpacked
+                self.data['UDP_packets'].loc[self.data['UDP_packets'].shape[0]] = unpacked
             else:
                 unpacked['data'] = str(unpacked['data'])
-                self.IP_v4_packets.loc[self.IP_v4_packets.shape[0]] = unpacked
+                self.data['IP_v4_packets'].loc[self.data['IP_v4_packets'].shape[0]] = unpacked
         elif (len(unpacked['data']) == 28 and unpacked['eth_proto'] == 1544 ):
             unpacked = ARP_packet(unpacked)
             unpacked['data'] = str(unpacked['data'])
-            self.ARP_packets.loc[self.ARP_packets.shape[0]] = unpacked
+            self.data['ARP_packets'].loc[self.data['ARP_packets'].shape[0]] = unpacked
         else:
             unpacked['data'] = str(unpacked['data'])
-            self.Ethernet_frames.loc[self.Ethernet_frames.shape[0]] = unpacked
+            self.data['Ethernet_frames'].loc[self.data['Ethernet_frames'].shape[0]] = unpacked
+
+
+class PandasModel(QAbstractTableModel):
+
+    def __init__(self, DataBase, parent=None):
+        QAbstractTableModel.__init__(self, parent)
+        self.DataBase = DataBase
+        self.type = 'Ethernet_frames'
+
+    def rowCount(self, parent=QModelIndex()) -> int:
+        if parent == QModelIndex():
+            return len(self.DataBase.data[self.type])
+
+        return 0
+
+    def columnCount(self, parent=QModelIndex()) -> int:
+        if parent == QModelIndex():
+            return len(self.DataBase.data[self.type].columns)
+        return 0
+
+    def data(self, index: QModelIndex, role=Qt.ItemDataRole):
+        if not index.isValid():
+            return None
+
+        if role == Qt.ItemDataRole.DisplayRole:
+            return str(self.DataBase.data[self.type].iloc[index.row(), index.column()])
+
+        return None
+
+    def headerData(
+        self, section: int, orientation: Qt.Orientation, role: Qt.ItemDataRole
+    ):
+        if role == Qt.ItemDataRole.DisplayRole:
+            if orientation == Qt.Orientation.Horizontal:
+                return str(self.DataBase.data[self.type].columns[section])
+
+            if orientation == Qt.Vertical:
+                return str(self.DataBase.data[self.type].index[section])
+
+        return None
+
+    def setData(self, index, value, role):
+        if role == Qt.EditRole:
+            self._data.iloc[index.row(),index.column()] = value
+            return True
+    def flags(self, index):
+        return Qt.ItemIsSelectable | Qt.ItemIsEnabled | Qt.ItemIsEditable
+
+    def update(self):
+        self.beginResetModel()
+        #self.DataBase[self.type] = self.DataBase[self.type]
+        self.endResetModel()
+
+class DFWidget(QTableView):
+    def __init__(self, df):
+        super().__init__()
+        super().horizontalHeader().setStretchLastSection(True)
+        super().setAlternatingRowColors(True)
+        super().setSelectionBehavior(QTableView.SelectRows)
+        self.model = PandasModel(df)
+        super().setModel(self.model)
+    def update(self):
+        self.model.update()
+    def change_type(self, type):
+        self.model.type = type
+    
+
+
+class Input_Button(QWidget):
+    def __init__(self, parent=None, funk = None, Name = '', Text = ''):
+        super().__init__(parent)
+
+        self.imput_line = QLineEdit(parent=self)
+        self.imput_line.setPlaceholderText(Text)
+        submit_button = QPushButton(parent=self, text=Name)
+        submit_button.clicked.connect(funk)
+        layout = QGridLayout()
+        layout.addWidget(self.imput_line, 0, 0)
+        layout.addWidget(submit_button, 0, 1)
+        self.setLayout(layout)
+
+
+class Display(QWidget):
+    def __init__(self, parent = None, df = None):
+        super().__init__(parent)
+        self.data = df
+        self.type = 'Ethernet_frames'
+        self.DF = DFWidget(df)
+        self.display = QLabel(parent = self)
+        self.DF.clicked.connect(self.set_text)
+        layout = QGridLayout()
+        layout.addWidget(self.DF, 0, 0)
+        layout.addWidget(self.display, 0, 1)
+        self.setLayout(layout)
+
+    def set_text(self):
+        index = self.DF.selectedIndexes()[0].row()
+        self.display.setText(str(self.data.data[self.type].loc[index]))
+
+    def update(self):
+        self.DF.update()
+
+    def change_type(self, type):
+        self.DF.change_type(type)
+        self.type = type
+
+
+
+class Main_window(QMainWindow):
+    def __init__(self, df):
+        super().__init__()
+        self.centralWidget = Display(self, df)
+        self.setCentralWidget(self.centralWidget)
+        self._createToolBars()
+
+    def _createActions(self):
+        self.refreshAction = QAction("Refresh", self)
+        self.refreshAction.triggered.connect(self.refreshed)
+        self.sort_by_src_mac = Input_Button(self, self.sort_src_mac, 'Sort', 'Sort source mac')
+        self.sort_by_src_mac.setFocusPolicy(Qt.NoFocus)
+        self.sort_by_dst_mac = Input_Button(self, self.sort_dst_mac, 'Sort', 'Sort destination mac')
+        self.sort_by_dst_mac.setFocusPolicy(Qt.NoFocus)
+        self.sort_by_src_ip = Input_Button(self, self.sort_src_ip, 'Sort', 'Sort source ip')
+        self.sort_by_src_ip.setFocusPolicy(Qt.NoFocus)
+        self.sort_by_dst_ip = Input_Button(self, self.sort_dst_ip, 'Sort', 'Sort destination ip')
+        self.sort_by_dst_ip.setFocusPolicy(Qt.NoFocus)
+        self.type = QComboBox()
+        self.type.addItem('Ethernet_frames')
+        self.type.addItem('ARP_packets')
+        self.type.addItem('IP_v4_packets')
+        self.type.addItem('ICMP_packets')
+        self.type.addItem('UDP_packets')
+        self.type.addItem('TCP_packets')
+        self.type.addItem('HTTP_packets')
+        self.type.setFocusPolicy(Qt.NoFocus)
+        self.type.currentTextChanged.connect(self.type_changed)
+
+
+    def type_changed(self, index):
+        self.centralWidget.change_type(index)
+        self.centralWidget.update()
+    def refreshed(self):
+        self.centralWidget.update()
+    def sort_src_mac(self):
+        print('sorted src mac by:', self.sort_by_src_mac.imput_line.displayText())
+    def sort_dst_mac(self):
+        print('sorted dst mac by:', self.sort_by_dst_mac.imput_line.displayText())
+    def sort_src_ip(self):
+        print('sorted src ip by:', self.sort_by_src_ip.imput_line.displayText())
+    def sort_dst_ip(self):
+        print('sorted dst ip by:', self.sort_by_dst_ip.imput_line.displayText())
+
+
+    def _createToolBars(self):
+        self._createActions()
+        ActionlBar = self.addToolBar("Actions")
+        ActionlBar.addAction(self.refreshAction)
+        ActionlBar.addWidget(self.type)
+        # Edit toolbar
+        SortingToolBar = self.addToolBar("Sorting")
+        SortingToolBar.addWidget(self.sort_by_src_mac)
+        SortingToolBar.addWidget(self.sort_by_dst_mac)
+        SortingToolBar.addWidget(self.sort_by_src_ip)
+        SortingToolBar.addWidget(self.sort_by_dst_ip)
 
 
 def Sniff(db):
     while(True):
         try:
-            sniff(prn=lambda x: db.insert_data(x.do_build()), count=0, session = DefaultSession)
+            sniff(prn=lambda x: db.insert_data(x.do_build()), count=0, session = None)
         except:
             continue
 
@@ -253,7 +426,11 @@ if __name__ == "__main__":
     th_sniff.start()
     try:
         Ips.attack()
-        command = ''
+        app = QApplication([])
+        view = Main_window(db)
+        view.show()
+        app.exec()
+        '''command = ''
         while (command != 'exit'):
             command = input('input command: ')
             if command == 'help':
@@ -264,13 +441,13 @@ if __name__ == "__main__":
                 for i in Ips.clients:
                     print(i.ip, i.mac)
             if command == 'packets':
-                print(1, 'Ethernet_frames:', db.Ethernet_frames.size)
-                print(2, 'ARP_packets:', db.ARP_packets.size)
-                print(3, 'IP_v4_packets:', db.IP_v4_packets.size)
-                print(4, 'ICMP_packets:', db.ICMP_packets.size)
-                print(5, 'UDP_packets:', db.UDP_packets.size)
-                print(6, 'TCP_packets:', db.TCP_packets.size)
-                print(7, 'HTTP_packets:', db.HTTP_packets.size)
+                print(1, 'Ethernet_frames:', db.Ethernet_frames.shape[0])
+                print(2, 'ARP_packets:', db.ARP_packets.shape[0])
+                print(3, 'IP_v4_packets:', db.IP_v4_packets.shape[0])
+                print(4, 'ICMP_packets:', db.ICMP_packets.shape[0])
+                print(5, 'UDP_packets:', db.UDP_packets.shape[0])
+                print(6, 'TCP_packets:', db.TCP_packets.shape[0])
+                print(7, 'HTTP_packets:', db.HTTP_packets.shape[0])
                 choice = ''
                 while (choice != 'back' and (choice.isdigit() == False or (int(choice) < 1 or int(choice) > 7))):
                     choice = input('choose type: ')
@@ -291,7 +468,7 @@ if __name__ == "__main__":
                     print(db.TCP_packets)
                 elif (choice == 7):
                     print(db.HTTP_packets)
-                
+        '''
         Ips.restore()
     except:
         Ips.restore()
